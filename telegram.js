@@ -1,16 +1,86 @@
-import { Telegraf } from 'telegraf'
-import { Service } from 'typedi'
+const { Telegraf } = require('telegraf')
+const mongoose = require('mongoose')
+const { connect, Schema } = mongoose
+let { MONGO_SRV_URL, TELEGRAM_BOT_TOKEN } = process.env
 
-import { TelegramChatModel, TelegramUserJoinChatModel, TelegramUserModel } from '@/models'
+TELEGRAM_BOT_TOKEN='6730362518:AAGbVJs3WH2VOoTNxh38gdTxbhMZTiodpyw' // TODO: Remove
 
-const TELEGRAM_BOT_TOKEN = '6730362518:AAGbVJs3WH2VOoTNxh38gdTxbhMZTiodpyw'
+const dbConnection = async () => {
+  try {
+    const options = {
+      connectTimeoutMS: 30000,
+      readPreference: 'primaryPreferred', // primary also will make mongoose auto create indexes in collections
+      useUnifiedTopology: true,
+      useNewUrlParser: true
+    }
 
-enum CommandKeys {
-  GET_LIST_CHANNELS = 'getlistchannels',
-  GET_INVITE_LINKS = 'getinvitelinks',
-  REMOVE_BUILDER = 'removebuilder',
-  GET_LIST_BUILDERS = 'getlistbuilders',
-  GET_CHAT_MEMBERS_COUNT = 'getchatmemberscount'
+    await connect(MONGO_SRV_URL || '', options)
+
+    mongoose.connection.on('error', error => {
+      console.error('Error connecting to database', error)
+      mongoose.connection.close()
+    })
+
+    mongoose.connection.on('disconnected', () => {
+      console.log('Disconnected from database')
+    })
+
+    console.log('Database connected')
+  } catch (error) {
+    console.error('Error connecting to database', error)
+    await mongoose.connection.close()
+  }
+}
+
+const TelegramUserSchema = new Schema(
+  {
+    id: { type: String, required: true, unique: true },
+    first_name: { type: String },
+    last_name: { type: String },
+    username: { type: String },
+    image: { type: String }
+  },
+  {
+    timestamps: true,
+    versionKey: false
+  }
+)
+
+const TelegramChatSchema = new Schema(
+  {
+    id: { type: String, required: true, unique: true },
+    title: { type: String, required: true },
+    type: { type: String, required: true },
+    invite_link: { type: String }
+  },
+  {
+    timestamps: true,
+    versionKey: false
+  }
+)
+
+const TelegramUserJoinChatSchema = new Schema(
+  {
+    user_id: { type: String, required: true },
+    chat_id: { type: String, required: true },
+    status: { type: String, required: true }
+  },
+  {
+    timestamps: true,
+    versionKey: false
+  }
+)
+
+const TelegramUserModel = mongoose.model('TelegramUser', TelegramUserSchema)
+const TelegramChatModel = mongoose.model('TelegramChat', TelegramChatSchema)
+const TelegramUserJoinChatModel = mongoose.model('TelegramUserJoinChat', TelegramUserJoinChatSchema)
+
+const  CommandKeys = {
+  'GET_LIST_CHANNELS':  'getlistchannels',
+  'GET_INVITE_LINKS':  'getinvitelinks',
+  'REMOVE_BUILDER':  'removebuilder',
+  'GET_LIST_BUILDERS':  'getlistbuilders',
+  'GET_CHAT_MEMBERS_COUNT':  'getchatmemberscount'
 }
 
 const commands = [
@@ -36,9 +106,8 @@ const commands = [
   }
 ]
 
-@Service()
-export class TelegramService {
-  public bot: Telegraf
+class TelegramService {
+  bot
   userStates = {} // In-memory state to track user conversations
 
   constructor() {
@@ -77,7 +146,7 @@ export class TelegramService {
 
   async commandGetInviteLinks(ctx) {
     const channels = await TelegramChatModel.find({}, { id: 1, title: 1, invite_link: 1 })
-    const links: { name: string; link: string }[] = []
+    const links = []
     for (const channel of channels) {
       if (!channel.invite_link) {
         channel.invite_link = await this.bot.telegram.exportChatInviteLink(channel.id)
@@ -218,9 +287,16 @@ export class TelegramService {
     }
   }
 
-  private _extractMentionedUser(text: string) {
+  _extractMentionedUser(text) {
     const mentionPattern = /@(\w+)/
     const match = text.match(mentionPattern)
     return match ? match[1] : null
   }
 }
+
+const main = async () => {
+  await dbConnection()
+  new TelegramService()
+}
+
+main()

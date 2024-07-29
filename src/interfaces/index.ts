@@ -1,6 +1,0 @@
-export * from './auth.interface'
-export * from './users.interface'
-export * from './routes.interface'
-export * from './admin.interface'
-export * from './token.interface'
-export * from './telegram.interface'
