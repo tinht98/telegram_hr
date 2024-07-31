@@ -568,6 +568,19 @@ class TelegramService {
       const adminIds = await this.botAdminIds()
       const fromId = ctx.message.from.id.toString()
       if (adminIds.includes(fromId)) {
+
+        // Only owner can mange bot admins
+        if (
+          ctx.message.text.includes(`/${CommandKeys.ADD_BOT_ADMIN}`) ||
+          ctx.message.text.includes(`/${CommandKeys.REMOVE_BOT_ADMIN}`) ||
+          ctx.message.text.includes(`/${CommandKeys.GET_BOT_ADMINS}`)
+        ) {
+          if (fromId != TELEGRAM_BOT_OWNER_ID) {
+            await ctx.reply('Sorry, only the bot owner can manage bot admins.');
+            return
+          }
+        }
+
         await next();
       } else {
         await ctx.reply('Sorry, only the bot owner can access this bot.');
