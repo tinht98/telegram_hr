@@ -78,7 +78,7 @@ const TelegramChatModel = mongoose.model('TelegramChat', TelegramChatSchema)
 const TelegramUserJoinChatModel = mongoose.model('TelegramUserJoinChat', TelegramUserJoinChatSchema)
 
 const CommandKeys = {
-  'ADD_ME_TO_CHANNELS': 'addmetochannels',
+  'I_AM_BUILDER': 'iambuilder',
   'GET_INVITE_LINKS': 'getinvitelinks',
   'GET_LIST_BUILDERS': 'getlistbuilders',
   'GET_LIST_CHANNELS': 'getlistchannels',
@@ -109,8 +109,8 @@ const commands = [
     description: 'Get the number of members in a chat'
   },
   {
-    command: CommandKeys.ADD_ME_TO_CHANNELS,
-    description: 'Add me to all channels'
+    command: CommandKeys.I_AM_BUILDER,
+    description: 'Add yourself to list of builders'
   },
   {
     command: CommandKeys.GET_LIST_BUILDERS_CSV,
@@ -137,7 +137,7 @@ class TelegramService {
     this.bot.command(CommandKeys.REMOVE_BUILDER, this.commandRemoveBuilder.bind(this))
     this.bot.command(CommandKeys.GET_LIST_BUILDERS, this.commandGetListBuilders.bind(this))
     this.bot.command(CommandKeys.GET_CHAT_MEMBERS_COUNT, this.commandGetChatMembersCount.bind(this))
-    this.bot.command(CommandKeys.ADD_ME_TO_CHANNELS, this.commandAddMeToChannels.bind(this))
+    this.bot.command(CommandKeys.I_AM_BUILDER, this.commandIamBuilder.bind(this))
     this.bot.command(CommandKeys.GET_LIST_BUILDERS_CSV, this.getListBuildersCsv.bind(this))
 
     // Builder management
@@ -220,7 +220,7 @@ class TelegramService {
     }
   }
 
-  async commandAddMeToChannels(ctx) {
+  async commandIamBuilder(ctx) {
     try {
       const channels = await TelegramChatModel.find({}, { id: 1 })
       for (const channel of channels) {
