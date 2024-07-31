@@ -3,7 +3,7 @@ const mongoose = require('mongoose')
 const { Readable } = require('stream');
 
 const { connect, Schema } = mongoose
-let { MONGO_SRV_URL, TELEGRAM_BOT_TOKEN } = process.env
+let { MONGO_SRV_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_OWNER_ID } = process.env
 
 TELEGRAM_BOT_TOKEN = '6730362518:AAGbVJs3WH2VOoTNxh38gdTxbhMZTiodpyw' // TODO: Remove
 
@@ -73,9 +73,24 @@ const TelegramUserJoinChatSchema = new Schema(
   }
 )
 
+const TelegramBotAdminSchema = new Schema(
+  {
+    user_id: { type: String, required: true },
+    first_name: { type: String, required: true },
+    last_name: { type: String, required: true },
+    username: { type: String, required: true },
+    role: { type: String, required: true }
+  },
+  {
+    timestamps: true,
+    versionKey: false
+  }
+)
+
 const TelegramUserModel = mongoose.model('TelegramUser', TelegramUserSchema)
 const TelegramChatModel = mongoose.model('TelegramChat', TelegramChatSchema)
 const TelegramUserJoinChatModel = mongoose.model('TelegramUserJoinChat', TelegramUserJoinChatSchema)
+const TelegramBotAdminModel = mongoose.model('TelegramBotAdmin', TelegramBotAdminSchema)
 
 const CommandKeys = {
   'I_AM_BUILDER': 'iambuilder',
@@ -87,66 +102,89 @@ const CommandKeys = {
   'GET_LIST_BUILDERS_CSV': 'getlistbuilderscsv',
 }
 
-const commands = [
-  {
-    command: CommandKeys.GET_INVITE_LINKS,
-    description: 'Get invite links of all channels'
-  },
-  {
-    command: CommandKeys.GET_LIST_CHANNELS,
-    description: 'Get list of all channels'
-  },
-  {
-    command: CommandKeys.REMOVE_BUILDER,
-    description: 'Remove builder from all channels'
-  },
-  {
-    command: CommandKeys.GET_LIST_BUILDERS,
-    description: 'Get list of all builders'
-  },
-  {
-    command: CommandKeys.GET_CHAT_MEMBERS_COUNT,
-    description: 'Get the number of members in a chat'
-  },
-  {
-    command: CommandKeys.I_AM_BUILDER,
-    description: 'Add yourself to list of builders'
-  },
-  {
-    command: CommandKeys.GET_LIST_BUILDERS_CSV,
-    description: 'Get list of all builders in CSV format'
-  },
-]
+
 
 class TelegramService {
   bot
   userStates = {} // In-memory state to track user conversations
 
-  constructor() {
-    this.bot = new Telegraf(TELEGRAM_BOT_TOKEN)
+  COMMANDS = [
+    {
+      command: CommandKeys.GET_INVITE_LINKS,
+      description: 'Get invite links of all channels',
+      handler: this.commandGetInviteLinks.bind(this)
+    },
+    {
+      command: CommandKeys.GET_LIST_CHANNELS,
+      description: 'Get list of all channels',
+      handler: this.commandGetListChannels.bind(this)
+    },
+    {
+      command: CommandKeys.REMOVE_BUILDER,
+      description: 'Remove builder from all channels',
+      handler: this.commandRemoveBuilder.bind(this)
+    },
+    {
+      command: CommandKeys.GET_LIST_BUILDERS,
+      description: 'Get list of all builders',
+      handler: this.commandGetListBuilders.bind(this)
+    },
+    {
+      command: CommandKeys.GET_CHAT_MEMBERS_COUNT,
+      description: 'Get the number of members in a chat',
+      handler: this.commandGetChatMembersCount.bind(this)
+    },
+    {
+      command: CommandKeys.I_AM_BUILDER,
+      description: 'Add yourself to list of builders',
+      handler: this.commandIamBuilder.bind(this)
+    },
+    {
+      command: CommandKeys.GET_LIST_BUILDERS_CSV,
+      description: 'Get list of all builders in CSV format',
+      handler: this.getListBuildersCsv.bind(this)
+    },
+  ]
 
+  BOT_EVENTS = [
+    {
+      event: 'my_chat_member', // Bot status in a chat changes
+      handler: this.myChatMember.bind(this)
+    },
+    {
+      event: 'new_chat_members', // New members join the chat
+      handler: this.newChatMembers.bind(this)
+    },
+    {
+      event: 'left_chat_member', // A member leaves the chat
+      handler: this.leftChatMember.bind(this)
+    },
+    {
+      event: 'text', // User replies to the bot
+      handler: this.processReply.bind(this)
+    },
+  ]
+
+  constructor() {
+    this.initTelegram()
+  }
+
+  async initTelegram() {
+    this.bot = new Telegraf(TELEGRAM_BOT_TOKEN)
+    this.bot.use(this.restrictToOwner.bind(this))
     this.bot.start(ctx => ctx.reply('Welcome'))
     this.bot.hears('hi', ctx => ctx.reply('Hey there'))
 
-    // Add commands
-    this.bot.telegram.setMyCommands(commands)
+    // Add commands and set handlers
+    this.bot.telegram.setMyCommands(this.COMMANDS)
+    for (const command of this.COMMANDS) {
+      this.bot.command(command.command, command.handler)
+    }
 
-    // Handle commands
-    this.bot.command(CommandKeys.GET_LIST_CHANNELS, this.commandGetListChannels.bind(this))
-    this.bot.command(CommandKeys.GET_INVITE_LINKS, this.commandGetInviteLinks.bind(this))
-    this.bot.command(CommandKeys.REMOVE_BUILDER, this.commandRemoveBuilder.bind(this))
-    this.bot.command(CommandKeys.GET_LIST_BUILDERS, this.commandGetListBuilders.bind(this))
-    this.bot.command(CommandKeys.GET_CHAT_MEMBERS_COUNT, this.commandGetChatMembersCount.bind(this))
-    this.bot.command(CommandKeys.I_AM_BUILDER, this.commandIamBuilder.bind(this))
-    this.bot.command(CommandKeys.GET_LIST_BUILDERS_CSV, this.getListBuildersCsv.bind(this))
-
-    // Builder management
-    this.bot.on('my_chat_member', this.myChatMember.bind(this))
-    this.bot.on('new_chat_members', this.newChatMembers.bind(this))
-    this.bot.on('left_chat_member', this.leftChatMember.bind(this))
-
-    // User replies to the bot
-    this.bot.on('text', this.processReply.bind(this))
+    // Add bot events
+    for (const event of this.BOT_EVENTS) {
+      this.bot.on(event.event, event.handler)
+    }
 
     this.bot.launch()
   }
@@ -155,7 +193,7 @@ class TelegramService {
     try {
       const channels = await TelegramChatModel.find()
       const makeLine = (channel, index) => `${index + 1}/ ${channel.title}`
-      ctx.reply(`Channels:\n\n${channels.map(makeLine).join('\n')}
+      await ctx.reply(`Channels:\n\n${channels.map(makeLine).join('\n')}
     `)
     } catch (error) {
       console.log('error', error)
@@ -167,15 +205,12 @@ class TelegramService {
       const channels = await TelegramChatModel.find({}, { id: 1, title: 1, invite_link: 1 })
       const links = []
       for (const channel of channels) {
-        if (!channel.invite_link) {
-          channel.invite_link = await this.bot.telegram.exportChatInviteLink(channel.id)
-          await TelegramChatModel.updateOne({ id: channel.id }, { invite_link: channel.invite_link })
-        }
+        channel.invite_link = await this.bot.telegram.exportChatInviteLink(channel.id)
         links.push({ name: channel.title, link: channel.invite_link })
       }
 
       const makeLine = (item, index) => ` ${index + 1}/ ${item.name}: ${item.link}`
-      ctx.reply(`Open the following links to join the channels:\n${links.map(makeLine).join('\n')}`)
+      await ctx.reply(`Open the following links to join the channels:\n${links.map(makeLine).join('\n')}`)
     } catch (error) {
       console.log('error', error)
     }
@@ -185,7 +220,7 @@ class TelegramService {
     try {
       const builders = await TelegramUserModel.find({ is_bot: { $ne: true } })
       const makeLine = (builder, index) => `${index + 1}/ @${builder.username}: ${builder.first_name ?? ''} ${builder.last_name ?? ''} - ID: ${builder.id}`
-      ctx.reply(`
+      await ctx.reply(`
       Builders:\n\n${builders.map(makeLine).join('\n')}
     `)
     } catch (error) {
@@ -225,7 +260,7 @@ class TelegramService {
       const channels = await TelegramChatModel.find({}, { id: 1 })
       for (const channel of channels) {
         // Add new user
-        TelegramUserModel.create({
+        await TelegramUserModel.create({
           id: ctx.from.id,
           first_name: ctx.from.first_name,
           last_name: ctx.from.last_name,
@@ -235,7 +270,7 @@ class TelegramService {
         })
 
         // Add user to chat id
-        TelegramUserJoinChatModel.create(
+        await TelegramUserJoinChatModel.create(
           {
             user_id: ctx.from.id,
             chat_id: channel.id,
@@ -276,19 +311,19 @@ class TelegramService {
   async myChatMember(ctx) {
     try {
       const status = ctx.myChatMember.new_chat_member.status
-      console.log('~ TelegramService ~ botOnChatMember ~ status:', status, 'chat:', ctx.chat)
+      console.log('~ TelegramService ~ myChatMember ~ status:', status, 'chat:', ctx.chat)
       switch (status) {
         case 'member':
-          TelegramChatModel.create({
+          await TelegramChatModel.create({
             id: ctx.chat.id,
             title: ctx.chat.title,
             type: ctx.chat.type
           }).catch(() => {
-            console.log('🔥 ~ TelegramService ~ botOnChatMember ~ error adding chat')
+            console.log('🔥 ~ TelegramService ~ myChatMember ~ error adding chat')
           })
           break
         case 'left':
-          TelegramChatModel.deleteOne({ id: ctx.chat.id })
+          await TelegramChatModel.deleteOne({ id: ctx.chat.id })
           break
       }
     } catch (error) {
@@ -300,7 +335,7 @@ class TelegramService {
     try {
       console.log('~ TelegramService ~ newChatMembers ~ ctx:', ctx.message)
       for (const member of ctx.message.new_chat_members) {
-        TelegramUserModel.create({
+        await TelegramUserModel.create({
           id: member.id,
           first_name: member.first_name,
           last_name: member.last_name,
@@ -310,7 +345,7 @@ class TelegramService {
           console.log('🔥 ~ TelegramService ~ newChatMembers ~ error adding user')
         })
 
-        TelegramUserJoinChatModel.create(
+        await TelegramUserJoinChatModel.create(
           {
             user_id: member.id,
             chat_id: ctx.chat.id,
@@ -329,8 +364,8 @@ class TelegramService {
   async leftChatMember(ctx) {
     try {
       console.log('~ TelegramService ~ leftChatMember ~ ctx:', ctx.message)
-      TelegramUserModel.deleteOne({ id: ctx.message.left_chat_member.id })
-      TelegramUserJoinChatModel.updateOne({ user_id: ctx.message.left_chat_member.id, chat_id: ctx.chat.id }, { status: 'removed' })
+      await TelegramUserModel.deleteOne({ id: ctx.message.left_chat_member.id })
+      await TelegramUserJoinChatModel.updateOne({ user_id: ctx.message.left_chat_member.id, chat_id: ctx.chat.id }, { status: 'removed' })
     } catch (error) {
       console.log('error', error)
     }
@@ -368,7 +403,7 @@ class TelegramService {
       } else {
         for (const chatId of chatIds) {
           await TelegramUserJoinChatModel.deleteMany({ user_id: builder.id, chat_id: chatId })
-          this.bot.telegram.banChatMember(chatId, builder.id).catch(() => {
+          await this.bot.telegram.banChatMember(chatId, builder.id).catch(() => {
             console.log('🔥 ~ TelegramService ~ removeBuilder ~ error banning user')
           })
         }
@@ -395,20 +430,43 @@ class TelegramService {
     }
   }
 
-  _extractMentionedUser(text) {
-    const mentionPattern = /@(\w+)/
-    const match = text.match(mentionPattern)
-    return match ? match[1] : null
-  }
-
   // Function to create a readable stream from a string
   createStreamFromString(content) {
-    const readable = new Readable();
-    readable._read = () => { }; // _read is required but you can noop it
-    readable.push(content);
-    readable.push(null); // Signal end of data
-    return readable;
+    try {
+      const readable = new Readable();
+      readable._read = () => { }; // _read is required but you can noop it
+      readable.push(content);
+      readable.push(null); // Signal end of data
+      return readable;
+    } catch (error) {
+      console.log('error', error)
+    }
   }
+
+  // Middleware to check if the user is the owner
+  async restrictToOwner(ctx, next) {
+    try {
+      const adminIds = await this.botAdminIds()
+      const fromId = ctx.message.from.id.toString()
+      if (adminIds.includes(fromId)) {
+        await next();
+      } else {
+        await ctx.reply('Sorry, only the bot owner can access this bot.');
+      }
+    } catch (error) {
+      console.log('error', error)
+    }
+  };
+
+  async botAdminIds() {
+    try {
+      const admins = await TelegramBotAdminModel.find()
+      return [TELEGRAM_BOT_OWNER_ID, ...admins.map(admin => admin.user_id)]
+    } catch (error) {
+      console.log('error', error)
+    }
+  }
+
 }
 
 const main = async () => {
