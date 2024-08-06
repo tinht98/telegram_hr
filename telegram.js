@@ -1,11 +1,13 @@
+const dotenv = require('dotenv')
+dotenv.config()
 const { Telegraf } = require('telegraf')
 const mongoose = require('mongoose')
 const { Readable } = require('stream');
 
 const { connect, Schema } = mongoose
 let { MONGO_SRV_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_OWNER_ID } = process.env
-
-TELEGRAM_BOT_TOKEN = '6730362518:AAGbVJs3WH2VOoTNxh38gdTxbhMZTiodpyw' // TODO: Remove
+console.log('TELEGRAM_BOT_OWNER_ID:', TELEGRAM_BOT_OWNER_ID)
+console.log('MONGO_SRV_URL:', MONGO_SRV_URL)
 
 const dbConnection = async () => {
   try {
