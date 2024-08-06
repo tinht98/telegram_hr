@@ -111,14 +111,14 @@ class TelegramService {
 
   COMMANDS = [
     {
+      command: CommandKeys.I_AM_BUILDER,
+      description: 'Login to Ninety Eight',
+      handler: this.commandIamBuilder.bind(this)
+    },
+    {
       command: CommandKeys.HELP,
       description: 'Get list of commands',
       handler: this.commandHelp.bind(this)
-    },
-    {
-      command: CommandKeys.I_AM_BUILDER,
-      description: 'Add yourself to list of builders',
-      handler: this.commandIamBuilder.bind(this)
     },
     {
       command: CommandKeys.GET_INVITE_LINKS,
@@ -197,7 +197,13 @@ class TelegramService {
     this.bot.hears('hi', ctx => ctx.reply('Hey there'))
 
     // Add commands and set handlers
-    this.bot.telegram.setMyCommands(this.COMMANDS)
+    this.bot.telegram.setMyCommands([
+      {
+        command: CommandKeys.I_AM_BUILDER,
+        description: 'Login to Ninety Eight',
+        handler: this.commandIamBuilder.bind(this)
+      }
+    ])
     for (const command of this.COMMANDS) {
       this.bot.command(command.command, command.handler)
     }
