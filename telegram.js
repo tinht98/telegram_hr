@@ -42,7 +42,9 @@ const TelegramUserSchema = new Schema(
     first_name: { type: String },
     last_name: { type: String },
     username: { type: String },
-    image: { type: String }
+    image: { type: String },
+    role: { type: String },
+    status: { type: String },
   },
   {
     timestamps: true,
@@ -75,25 +77,13 @@ const TelegramUserJoinChatSchema = new Schema(
   }
 )
 
-const TelegramBotAdminSchema = new Schema(
-  {
-    user_id: { type: mongoose.Schema.Types.Mixed, required: true, unique: true },
-    role: { type: String, required: true }
-  },
-  {
-    timestamps: true,
-    versionKey: false
-  }
-)
-
 const TelegramUserModel = mongoose.model('TelegramUser', TelegramUserSchema)
 const TelegramChatModel = mongoose.model('TelegramChat', TelegramChatSchema)
 const TelegramUserJoinChatModel = mongoose.model('TelegramUserJoinChat', TelegramUserJoinChatSchema)
-const TelegramBotAdminModel = mongoose.model('TelegramBotAdmin', TelegramBotAdminSchema)
 
 const CommandKeys = {
   'HELP': 'help',
-  'I_AM_BUILDER': 'iambuilder',
+  'I_AM_98_BUILDER': 'iam98builder',
   'GET_INVITE_LINKS': 'getinvitelinks',
   'GET_LIST_CHANNELS': 'getlistchannels',
   'GET_LIST_BUILDERS': 'getlistbuilders',
@@ -102,10 +92,18 @@ const CommandKeys = {
   'ADD_BOT_ADMIN': 'addbotadmin',
   'GET_BOT_ADMINS': 'getbotadmins',
   'REMOVE_BOT_ADMIN': 'removebotadmin',
-  // 'GET_CHAT_MEMBERS_COUNT': 'getchatmemberscount',
 }
 
+const ROLES = {
+  builder: 'builder',
+  hr: 'hr',
+  admin: 'admin'
+}
 
+const USER_STATUS = {
+  enabled: 'enabled',
+  disabled: 'disabled'
+}
 
 class TelegramService {
   bot
@@ -113,60 +111,65 @@ class TelegramService {
 
   COMMANDS = [
     {
-      command: CommandKeys.I_AM_BUILDER,
+      command: CommandKeys.I_AM_98_BUILDER,
       description: 'Login to Ninety Eight',
-      handler: this.commandIamBuilder.bind(this)
+      handler: this.commandIamBuilder.bind(this),
+      roles: [ROLES.builder, ROLES.hr, ROLES.admin]
     },
     {
       command: CommandKeys.HELP,
       description: 'Get list of commands',
-      handler: this.commandHelp.bind(this)
+      handler: this.commandHelp.bind(this),
+      roles: [ROLES.builder, ROLES.hr, ROLES.admin]
     },
     {
       command: CommandKeys.GET_INVITE_LINKS,
       description: 'Get invite links of all channels',
-      handler: this.commandGetInviteLinks.bind(this)
+      handler: this.commandGetInviteLinks.bind(this),
+      roles: [ROLES.admin]
     },
     {
       command: CommandKeys.GET_LIST_CHANNELS,
       description: 'Get list of all channels',
-      handler: this.commandGetListChannels.bind(this)
+      handler: this.commandGetListChannels.bind(this),
+      roles: [ROLES.admin]
     },
     {
       command: CommandKeys.GET_LIST_BUILDERS,
       description: 'Get list of all builders',
-      handler: this.commandGetListBuilders.bind(this)
+      handler: this.commandGetListBuilders.bind(this),
+      roles: [ROLES.hr, ROLES.admin]
     },
     {
       command: CommandKeys.REMOVE_BUILDER,
-      description: 'Remove builder from all channels',
-      handler: this.commandRemoveBuilder.bind(this)
+      description: 'Remove builder from all channels and groups',
+      handler: this.commandRemoveBuilder.bind(this),
+      roles: [ROLES.hr, ROLES.admin]
     },
     {
       command: CommandKeys.GET_LIST_BUILDERS_CSV,
       description: 'Get list of all builders in CSV format',
-      handler: this.getListBuildersCsv.bind(this)
+      handler: this.getListBuildersCsv.bind(this),
+      roles: [ROLES.hr, ROLES.admin]
     },
     {
       command: CommandKeys.ADD_BOT_ADMIN,
       description: 'Add a bot admin',
-      handler: this.commandAddBotAdmin.bind(this)
+      handler: this.commandAddBotAdmin.bind(this),
+      roles: [ROLES.admin]
     },
     {
       command: CommandKeys.GET_BOT_ADMINS,
       description: 'Get list of bot admins',
-      handler: this.commandGetBotAdmins.bind(this)
+      handler: this.commandGetBotAdmins.bind(this),
+      roles: [ROLES.admin]
     },
     {
       command: CommandKeys.REMOVE_BOT_ADMIN,
       description: 'Remove a bot admin',
-      handler: this.commandRemoveBotAdmin.bind(this)
+      handler: this.commandRemoveBotAdmin.bind(this),
+      roles: [ROLES.admin]
     }
-    // {
-    //   command: CommandKeys.GET_CHAT_MEMBERS_COUNT,
-    //   description: 'Get the number of members in a chat',
-    //   handler: this.commandGetChatMembersCount.bind(this)
-    // },
   ]
 
   BOT_EVENTS = [
@@ -194,14 +197,14 @@ class TelegramService {
 
   async initTelegram() {
     this.bot = new Telegraf(TELEGRAM_BOT_TOKEN)
-    this.bot.use(this.restrictToOwner.bind(this))
+    this.bot.use(this.setRoleAccess.bind(this))
     this.bot.start(ctx => ctx.reply('Welcome'))
     this.bot.hears('hi', ctx => ctx.reply('Hey there'))
 
     // Add commands and set handlers
     this.bot.telegram.setMyCommands([
       {
-        command: CommandKeys.I_AM_BUILDER,
+        command: CommandKeys.I_AM_98_BUILDER,
         description: 'Login to Ninety Eight',
         handler: this.commandIamBuilder.bind(this)
       }
@@ -220,8 +223,11 @@ class TelegramService {
 
   async commandHelp(ctx) {
     try {
+      // Send the list of commands base on role
+      const currentRole = ctx.from.role
+      const commands = this.COMMANDS.filter(it => it.roles.includes(currentRole))
       const makeLine = (command, index) => `${index + 1}/ /${command.command} - ${command.description}`
-      await ctx.reply(`Commands:\n\n${this.COMMANDS.map(makeLine).join('\n')}`)
+      await ctx.reply(`Commands:\n\n${commands.map(makeLine).join('\n')}`)
     } catch (error) {
       console.log('error', error)
     }
@@ -286,7 +292,7 @@ class TelegramService {
 
   async commandAddBotAdmin(ctx) {
     try {
-      await this.bot.telegram.sendMessage(ctx.chat.id, 'Please enter the `ID` of the user you want to add as bot admin')
+      await this.bot.telegram.sendMessage(ctx.chat.id, 'Please enter the `ID` and `role` (```hr```, ```admin```) of the user you want to add as bot admin\n\nExample: ```123456789 hr```')
       this.userStates[ctx.from.id] = { stage: CommandKeys.ADD_BOT_ADMIN }
     } catch (error) {
       console.log('error', error)
@@ -295,10 +301,12 @@ class TelegramService {
 
   async commandGetBotAdmins(ctx) {
     try {
-      const adminIds = await this.botAdminIds()
-      const admins = await TelegramUserModel.find({ id: { $in: adminIds } })
-      console.log('TelegramService ~ commandGetBotAdmins ~ admins:', admins)
-      const makeLine = (admin, index) => `${index + 1}/ @${admin.username}: ${admin.first_name ?? ''} ${admin.last_name ?? ''} - ID: ${admin.id}`
+      const admins = await TelegramUserModel.find({role: { $in: ['hr', 'admin'] }})
+      if (!admins.length) {
+        await ctx.reply('There are no bot admins. Let\'s add some!')
+        return
+      }
+      const makeLine = (admin, index) => `${index + 1}/ @${admin.username}: ${admin.first_name ?? ''} ${admin.last_name ?? ''} - ID: ${admin.id} - Role: ${admin.id === TELEGRAM_BOT_OWNER_ID ? 'OWNER' : admin.role.toUpperCase()}`
       await ctx.reply(`
       Bot Admins:\n\n${admins.map(makeLine).join('\n')}
     `)
@@ -316,15 +324,6 @@ class TelegramService {
     }
   }
 
-  // async commandGetChatMembersCount(ctx) {
-  //   try {
-  //     await this.bot.telegram.sendMessage(ctx.chat.id, 'Please enter the group name')
-  //     this.userStates[ctx.from.id] = { stage: CommandKeys.GET_CHAT_MEMBERS_COUNT }
-  //   } catch (error) {
-  //     console.log('error', error)
-  //   }
-  // }
-
   async commandIamBuilder(ctx) {
     try {
       const channels = await TelegramChatModel.find({}, { id: 1 })
@@ -335,6 +334,7 @@ class TelegramService {
           first_name: ctx.from.first_name,
           last_name: ctx.from.last_name,
           username: ctx.from.username,
+          status: USER_STATUS.enabled
         }).catch(() => {
           console.log('🔥 ~ TelegramService ~ commandAddMeToChannels ~ error adding user')
         })
@@ -456,9 +456,6 @@ class TelegramService {
           case CommandKeys.REMOVE_BOT_ADMIN:
             await this.removeBotAdmin(ctx)
             break
-          // case CommandKeys.GET_CHAT_MEMBERS_COUNT:
-          //   await this.getChatMembersCount(ctx)
-          //   break
         }
       }
       // Clear user's state after processing
@@ -483,8 +480,8 @@ class TelegramService {
             console.log('🔥 ~ TelegramService ~ removeBuilder ~ error banning user')
           })
         }
-        await TelegramUserModel.deleteOne({ id: builder.id })
-        await this.bot.telegram.sendMessage(ctx.chat.id, `Builder \`@${builder.username}\` has been removed from all channels`)
+        await TelegramUserModel.updateOne({ id: builder.id }, { status: USER_STATUS.disabled, role: null })
+        await this.bot.telegram.sendMessage(ctx.chat.id, `Builder \`@${builder.username}\` has been removed from all channels and groups`)
       }
     } catch (error) {
       console.log('error', error)
@@ -494,19 +491,21 @@ class TelegramService {
   async addBotAdmin(ctx) {
     try {
       // Get from telegram user
-      const user = await TelegramUserModel.findOne({ id: ctx.message.text })
+      const [userId, role] = ctx.message.text.split(' ')
+      if (!userId || !role || !['hr', 'admin'].includes(role)) {
+        await this.bot.telegram.sendMessage(ctx.chat.id, 'Invalid user ID or role')
+        return
+      }
+      const user = await TelegramUserModel.findOne({ id: userId})
       if (!user) {
         await this.bot.telegram.sendMessage(ctx.chat.id, 'User not found')
         return
       } else {
-        await TelegramBotAdminModel.create({
-          user_id: user.id,
-          role: 'admin'
-        }).catch(() => {
+        await TelegramUserModel.updateOne({ id: user.id }, { role: role }).catch(() => {
           console.log('🔥 ~ TelegramService ~ addBotAdmin ~ error adding user as bot admin')
         })
       }
-      await this.bot.telegram.sendMessage(ctx.chat.id, `User \`@${user.username}\` has been added as bot admin`)
+      await this.bot.telegram.sendMessage(ctx.chat.id, `User \`@${user.username}\` has been added as ${role}`)
     } catch (error) {
       console.log('error', error)
     }
@@ -522,14 +521,16 @@ class TelegramService {
         await this.bot.telegram.sendMessage(ctx.chat.id, 'You cannot remove the bot owner')
         return
       }
-      const adminId = await TelegramBotAdminModel.findOne({ user_id: ctx.message.text })
-      const user = await TelegramUserModel.findOne({ id: adminId.user_id })
+      const adminId = ctx.message.text
+      const user = await TelegramUserModel.findOne({ id: adminId, role: { $in: ['hr', 'admin'] } })
       console.log('TelegramService ~ removeBotAdmin ~ user:', user)
       if (!user) {
-        await this.bot.telegram.sendMessage(ctx.chat.id, 'User not found')
+        await this.bot.telegram.sendMessage(ctx.chat.id, 'No bot admin found')
         return
       } else {
-        await TelegramBotAdminModel.deleteOne({ user_id: user.id })
+        await TelegramUserModel.updateOne({ id: user.id }, { role: null }).catch(() => {
+          console.log('🔥 ~ TelegramService ~ removeBotAdmin ~ error removing user as bot admin')
+        })
         await this.bot.telegram.sendMessage(ctx.chat.id, `User \`@${user.username}\` has been removed as bot admin`)
       }
     } catch (error) {
@@ -566,42 +567,70 @@ class TelegramService {
   }
 
   // Middleware to check if the user is the owner
-  async restrictToOwner(ctx, next) {
-    // If command is I_AM_BUILDER, allow the user to proceed
-    if (ctx.message.text === `/${CommandKeys.I_AM_BUILDER}`) {
-      await next();
-      return
-    }
+  async setRoleAccess(ctx, next) {
     try {
-      const adminIds = await this.botAdminIds()
-      const fromId = ctx.message.from.id.toString()
-      if (adminIds.includes(fromId)) {
 
-        // Only owner can mange bot admins
-        if (
-          ctx.message.text.includes(`/${CommandKeys.ADD_BOT_ADMIN}`) ||
-          ctx.message.text.includes(`/${CommandKeys.REMOVE_BOT_ADMIN}`) ||
-          ctx.message.text.includes(`/${CommandKeys.GET_BOT_ADMINS}`)
-        ) {
-          if (fromId != TELEGRAM_BOT_OWNER_ID) {
-            await ctx.reply('Sorry, only the bot owner can manage bot admins.');
-            return
-          }
-        }
-
+      // If message.text is not in command list, skip
+      const isCommand = this.COMMANDS.some(it => {
+        return `/${it.command}` == ctx.message.text
+      })
+      if (!isCommand) {
         await next();
-      } else {
-        await ctx.reply('Sorry, only the bot owner can access this bot.');
+        return
       }
+
+      const currentRole = await this.getCtxCurrentRole(ctx)
+      console.log('TelegramService ~ setRoleAccess ~ currentRole:', currentRole)
+
+      if (!currentRole || !ctx.message?.text) {
+        await next();
+        return
+      }
+
+      ctx.from.role = currentRole
+
+      for (const role of Object.values(ROLES)) {
+        if (role != currentRole) {
+          continue
+        }
+        const validCmd = this.COMMANDS.filter(it => it.roles.includes(role)).some(it => {
+          return `/${it.command}` == ctx.message.text
+        })
+        console.log('TelegramService ~ setRoleAccess ~ validCmd:', validCmd)
+        if (validCmd) {
+          await next();
+          return
+        } else {
+          await ctx.reply('Sorry, you do not have permission to access this command.');
+          return
+        }
+      }
+      await next();
     } catch (error) {
       console.log('error', error)
+      try {
+        await ctx.reply('Sorry, an error occurred. Please try again later.')
+      } catch (error) {}
     }
   };
 
-  async botAdminIds() {
+  async getCtxCurrentRole(ctx) {
     try {
-      const admins = await TelegramBotAdminModel.find()
-      return [TELEGRAM_BOT_OWNER_ID, ...admins.map(admin => admin.user_id)]
+      const admins = await TelegramUserModel.find({role: { $in: ['hr', 'admin'] }})
+      const fromId = `${ctx.message?.from?.id}`
+      if (!fromId) {
+        return
+      }
+      if (fromId === TELEGRAM_BOT_OWNER_ID) {
+        return ROLES.admin
+      } else {
+        const admin = admins.find(admin => admin.id === fromId)
+        if (admin) {
+          return admin.role
+        } else {
+          return ROLES.builder
+        }
+      }
     } catch (error) {
       console.log('error', error)
     }
