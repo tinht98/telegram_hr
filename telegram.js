@@ -43,6 +43,7 @@ const TelegramUserSchema = new Schema(
     last_name: { type: String },
     username: { type: String },
     image: { type: String },
+    email: { type: String },
     role: { type: String },
     status: { type: String },
   },
@@ -87,6 +88,7 @@ const CommandKeys = {
   'GET_INVITE_LINKS': 'getinvitelinks',
   'GET_LIST_CHANNELS': 'getlistchannels',
   'GET_LIST_BUILDERS': 'getlistbuilders',
+  'UPDATE_BUILDER_EMAIL': 'updatebuilderemail',
   'REMOVE_BUILDER': 'removebuilder',
   'GET_LIST_BUILDERS_CSV': 'getlistbuilderscsv',
   'ADD_BOT_ADMIN': 'addbotadmin',
@@ -138,6 +140,12 @@ class TelegramService {
       command: CommandKeys.GET_LIST_BUILDERS,
       description: 'Get list of all builders',
       handler: this.commandGetListBuilders.bind(this),
+      roles: [ROLES.hr, ROLES.admin]
+    },
+    {
+      command: CommandKeys.UPDATE_BUILDER_EMAIL,
+      description: 'Update builder email',
+      handler: this.commandUpdateBuilderEmail.bind(this),
       roles: [ROLES.hr, ROLES.admin]
     },
     {
@@ -207,6 +215,11 @@ class TelegramService {
         command: CommandKeys.I_AM_98_BUILDER,
         description: 'Login to Ninety Eight',
         handler: this.commandIamBuilder.bind(this)
+      },
+      {
+        command: CommandKeys.HELP,
+        description: 'Get list of commands',
+        handler: this.commandHelp.bind(this)
       }
     ])
     for (const command of this.COMMANDS) {
@@ -263,7 +276,15 @@ class TelegramService {
   async commandGetListBuilders(ctx) {
     try {
       const builders = await TelegramUserModel.find({ is_bot: { $ne: true } })
-      const makeLine = (builder, index) => `${index + 1}/ @${builder.username}: ${builder.first_name ?? ''} ${builder.last_name ?? ''} - ID: ${builder.id}`
+      // const makeLine = (builder, index) => `${index + 1}/ @${builder.username}: ${builder.first_name ?? ''} ${builder.last_name ?? ''} - ID: ${builder.id}`
+
+      // idx - username - first_name - last_name - ID - email - role
+      const makeLine = (builder, index) => {
+        let line = `${index + 1}/ @${builder.username}: ${builder.first_name ?? ''} ${builder.last_name ?? ''} - ID: ${builder.id} - Email: ${builder.email ?? ''}`
+        if (builder.role)  line += ` - Role: ${builder.role.toUpperCase()}`
+        if (builder.status == USER_STATUS.disabled) line += ' - Status: Disabled'
+        return line
+      }
       await ctx.reply(`
       Builders:\n\n${builders.map(makeLine).join('\n')}
     `)
@@ -272,11 +293,21 @@ class TelegramService {
     }
   }
 
+  async commandUpdateBuilderEmail(ctx) {
+    try {
+      await this.bot.telegram.sendMessage(ctx.chat.id, 'Please enter the `ID` and `email` of the user you want to update\n\nExample: \"123456789 builder1@coin98.finance\"')
+      this.userStates[ctx.from.id] = { stage: CommandKeys.UPDATE_BUILDER_EMAIL }
+    } catch (error) {
+      console.log('error', error)
+    }
+  }
+
   async getListBuildersCsv(ctx) {
     try {
       const builders = await TelegramUserModel.find({ is_bot: { $ne: true } }).lean()
-      const header = 'ID,User Name, First Name, Last Name\n'
-      const csv = builders.map(builder => `${builder.id},@${builder.username || ''},${builder.first_name || ''},${builder.last_name || ''}`).join('\n')
+      const header = 'ID,User Name, First Name, Last Name, Email, Role, Status\n'
+      // const csv = builders.map(builder => `${builder.id},@${builder.username || ''},${builder.first_name || ''},${builder.last_name || ''}`).join('\n')
+      const csv = builders.map(builder => `${builder.id},${builder.username || ''},${builder.first_name || ''},${builder.last_name || ''},${builder.email || ''},${builder.role || ''},${builder.status || ''}`).join('\n')
       const csvWithHeader = header + csv
       const csvStream = this.createStreamFromString(csvWithHeader);
 
@@ -292,7 +323,7 @@ class TelegramService {
 
   async commandAddBotAdmin(ctx) {
     try {
-      await this.bot.telegram.sendMessage(ctx.chat.id, 'Please enter the `ID` and `role` (```hr```, ```admin```) of the user you want to add as bot admin\n\nExample: ```123456789 hr```')
+      await this.bot.telegram.sendMessage(ctx.chat.id, 'Please enter the `ID` and `role` (\"hr\", \"admin\") of the user you want to add as bot admin\n\nExample: \"123456789 hr\"')
       this.userStates[ctx.from.id] = { stage: CommandKeys.ADD_BOT_ADMIN }
     } catch (error) {
       console.log('error', error)
@@ -365,7 +396,7 @@ class TelegramService {
    */
   async commandRemoveBuilder(ctx) {
     try {
-      await this.bot.telegram.sendMessage(ctx.chat.id, 'Please enter the `ID` of the builder you want to remove')
+      await this.bot.telegram.sendMessage(ctx.chat.id, 'Please enter the `ID` or `Email` of the user you want to remove from all channels and groups')
       this.userStates[ctx.from.id] = { stage: CommandKeys.REMOVE_BUILDER }
     } catch (error) {
       console.log('error', error)
@@ -456,6 +487,9 @@ class TelegramService {
           case CommandKeys.REMOVE_BOT_ADMIN:
             await this.removeBotAdmin(ctx)
             break
+          case CommandKeys.UPDATE_BUILDER_EMAIL:
+            await this.updateBuilderEmail(ctx)
+            break
         }
       }
       // Clear user's state after processing
@@ -467,8 +501,8 @@ class TelegramService {
 
   async removeBuilder(ctx) {
     try {
-      const builderId = ctx.message.text
-      const builder = await TelegramUserModel.findOne({ id: builderId })
+      const condition = ctx.message.text
+      const builder = await TelegramUserModel.findOne({ $or: [{ id: condition }, { email: condition }] })
       const chats = await TelegramChatModel.find({}, { id: 1 })
       const chatIds = chats.map(chat => chat.id)
       if (!builder) {
@@ -533,6 +567,28 @@ class TelegramService {
         })
         await this.bot.telegram.sendMessage(ctx.chat.id, `User \`@${user.username}\` has been removed as bot admin`)
       }
+    } catch (error) {
+      console.log('error', error)
+    }
+  }
+
+  async updateBuilderEmail(ctx) {
+    try {
+      const [userId, email] = ctx.message.text.split(' ')
+      if (!userId || !email) {
+        await this.bot.telegram.sendMessage(ctx.chat.id, 'Invalid user ID or email')
+        return
+      }
+      const user = await TelegramUserModel.findOne({ id: userId })
+      if (!user) {
+        await this.bot.telegram.sendMessage(ctx.chat.id, 'User not found')
+        return
+      } else {
+        await TelegramUserModel.updateOne({ id: user.id }, { email: email }).catch(() => {
+          console.log('🔥 ~ TelegramService ~ updateBuilderEmail ~ error updating user email')
+        })
+      }
+      await this.bot.telegram.sendMessage(ctx.chat.id, `User \`@${user.username}\` email has been updated to \`${email}\``)
     } catch (error) {
       console.log('error', error)
     }
