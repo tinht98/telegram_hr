@@ -88,6 +88,7 @@ const CommandKeys = {
   'GET_INVITE_LINKS': 'getinvitelinks',
   'GET_LIST_CHANNELS': 'getlistchannels',
   'GET_LIST_BUILDERS': 'getlistbuilders',
+  'GET_BUILDER_STATUS_SUMMARY': 'getbuilderstatussummary',
   'UPDATE_BUILDER_EMAIL': 'updatebuilderemail',
   'REMOVE_BUILDER': 'removebuilder',
   'GET_LIST_BUILDERS_CSV': 'getlistbuilderscsv',
@@ -140,6 +141,12 @@ class TelegramService {
       command: CommandKeys.GET_LIST_BUILDERS,
       description: 'Get list of all builders',
       handler: this.commandGetListBuilders.bind(this),
+      roles: [ROLES.hr, ROLES.admin]
+    },
+    {
+      command: CommandKeys.GET_BUILDER_STATUS_SUMMARY,
+      description: 'Get summary of builder status',
+      handler: this.getBuilderStatusSummary.bind(this),
       roles: [ROLES.hr, ROLES.admin]
     },
     {
@@ -276,8 +283,6 @@ class TelegramService {
   async commandGetListBuilders(ctx) {
     try {
       const builders = await TelegramUserModel.find({ is_bot: { $ne: true } })
-      // const makeLine = (builder, index) => `${index + 1}/ @${builder.username}: ${builder.first_name ?? ''} ${builder.last_name ?? ''} - ID: ${builder.id}`
-
       // idx - username - first_name - last_name - ID - email - role
       const makeLine = (builder, index) => {
         let line = `${index + 1}/ @${builder.username}: ${builder.first_name ?? ''} ${builder.last_name ?? ''} - ID: ${builder.id} - Email: ${builder.email ?? ''}`
@@ -288,6 +293,24 @@ class TelegramService {
       await ctx.reply(`
       Builders:\n\n${builders.map(makeLine).join('\n')}
     `)
+    } catch (error) {
+      console.log('error', error)
+    }
+  }
+
+  async getBuilderStatusSummary(ctx) {
+    try {
+      const builders = await TelegramUserModel.find({ is_bot: { $ne: true } })
+      const summary = builders.reduce((acc, builder) => {
+        if (!acc[builder.status]) {
+          acc[builder.status] = 1
+        } else {
+          acc[builder.status]++
+        }
+        return acc
+      }, {})
+      const makeLine = (status, count) => ` - Status: ${(status != 'undefined' ? status : USER_STATUS.enabled).toUpperCase()} - Headcount: ${count}`
+      await ctx.reply(`Builder Status Summary:\n\n${Object.entries(summary).map(([status, count]) => makeLine(status, count)).join('\n')}`)
     } catch (error) {
       console.log('error', error)
     }
@@ -306,7 +329,6 @@ class TelegramService {
     try {
       const builders = await TelegramUserModel.find({ is_bot: { $ne: true } }).lean()
       const header = 'ID,User Name, First Name, Last Name, Email, Role, Status\n'
-      // const csv = builders.map(builder => `${builder.id},@${builder.username || ''},${builder.first_name || ''},${builder.last_name || ''}`).join('\n')
       const csv = builders.map(builder => `${builder.id},${builder.username || ''},${builder.first_name || ''},${builder.last_name || ''},${builder.email || ''},${builder.role || ''},${builder.status || ''}`).join('\n')
       const csvWithHeader = header + csv
       const csvStream = this.createStreamFromString(csvWithHeader);
@@ -338,9 +360,7 @@ class TelegramService {
         return
       }
       const makeLine = (admin, index) => `${index + 1}/ @${admin.username}: ${admin.first_name ?? ''} ${admin.last_name ?? ''} - ID: ${admin.id} - Role: ${admin.id === TELEGRAM_BOT_OWNER_ID ? 'OWNER' : admin.role.toUpperCase()}`
-      await ctx.reply(`
-      Bot Admins:\n\n${admins.map(makeLine).join('\n')}
-    `)
+      await ctx.reply(`Bot Admins:\n\n${admins.map(makeLine).join('\n')}`)
     } catch (error) {
       console.log('error', error)
     }
@@ -594,20 +614,20 @@ class TelegramService {
     }
   }
 
-  async getChatMembersCount(ctx) {
-    try {
-      console.log('🔥 ~ TelegramService ~ constructor ~ ctx.message.text:', ctx.message)
-      const text = await TelegramChatModel.findOne({ title: ctx.message.text })
-      if (text) {
-        const result = await this.bot.telegram.getChatMembersCount(text.id)
-        await this.bot.telegram.sendMessage(ctx.chat.id, `The number of members in the chat is ${result}`)
-      } else {
-        await this.bot.telegram.sendMessage(ctx.chat.id, 'Chat not found')
-      }
-    } catch (error) {
-      console.log('error', error)
-    }
-  }
+  // async getChatMembersCount(ctx) {
+  //   try {
+  //     console.log('🔥 ~ TelegramService ~ constructor ~ ctx.message.text:', ctx.message)
+  //     const text = await TelegramChatModel.findOne({ title: ctx.message.text })
+  //     if (text) {
+  //       const result = await this.bot.telegram.getChatMembersCount(text.id)
+  //       await this.bot.telegram.sendMessage(ctx.chat.id, `The number of members in the chat is ${result}`)
+  //     } else {
+  //       await this.bot.telegram.sendMessage(ctx.chat.id, 'Chat not found')
+  //     }
+  //   } catch (error) {
+  //     console.log('error', error)
+  //   }
+  // }
 
   // Function to create a readable stream from a string
   createStreamFromString(content) {
@@ -636,7 +656,6 @@ class TelegramService {
       }
 
       const currentRole = await this.getCtxCurrentRole(ctx)
-      console.log('TelegramService ~ setRoleAccess ~ currentRole:', currentRole)
 
       if (!currentRole || !ctx.message?.text) {
         await next();
@@ -649,10 +668,7 @@ class TelegramService {
         if (role != currentRole) {
           continue
         }
-        const validCmd = this.COMMANDS.filter(it => it.roles.includes(role)).some(it => {
-          return `/${it.command}` == ctx.message.text
-        })
-        console.log('TelegramService ~ setRoleAccess ~ validCmd:', validCmd)
+        const validCmd = this.COMMANDS.filter(it => it.roles.includes(role)).some(it => `/${it.command}` == ctx.message.text)
         if (validCmd) {
           await next();
           return
